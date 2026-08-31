@@ -19,18 +19,39 @@
     <section class="panels">
       <div class="panel">
         <h2>Requests</h2>
+        <div class="toolbar">
+          <button id="req-newer" class="btn btn-small" disabled>‹ newer</button>
+          <span id="req-page-info" class="dim">–</span>
+          <button id="req-older" class="btn btn-small" disabled>older ›</button>
+        </div>
         <div id="requests" class="requests">
           <div class="empty">No requests yet — hit your public URL.</div>
         </div>
       </div>
       <div class="panel">
         <h2>cloudflared log</h2>
+        <div class="toolbar">
+          <button id="log-newer" class="btn btn-small" disabled>‹ newer</button>
+          <span id="log-page-info" class="dim">–</span>
+          <button id="log-older" class="btn btn-small" disabled>older ›</button>
+        </div>
         <div id="logs" class="logs">
           <div class="empty">No log lines yet.</div>
         </div>
       </div>
     </section>
   </main>
+
+  <footer class="footer">
+    Developed by
+    <a href="https://cscode.xyz" target="_blank" rel="noopener">Creative Studio Code</a>
+    &middot;
+    <a href="https://cscode.xyz" target="_blank" rel="noopener">cscode.xyz</a>
+    &middot;
+    &copy; <span id="year">2026</span>
+    &middot;
+    <a href="https://opensource.org/licenses/MIT" target="_blank" rel="noopener">MIT License</a>
+  </footer>
 
   <div id="modal" class="modal hidden">
     <div class="modal-card">

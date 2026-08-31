@@ -39,17 +39,39 @@ export function configFile(): string {
   return path.join(dataDir(), 'config.json');
 }
 
+export interface DefaultTunnelConfig {
+  name: string;
+  hostname?: string;
+  port?: number;
+  /** Upstream URL the inspection proxy forwards to (overrides the default http://127.0.0.1:<port>). */
+  target?: string;
+  auth?: string;
+  hostHeader?: string;
+  region?: string;
+}
+
 export interface AppConfig {
   version: 1;
   dashboardPort: number;
   openBrowser: boolean;
   cloudflaredPath?: string;
+  /** `null` means the user explicitly cleared the (baked-in) default tunnel. */
+  defaultTunnel?: DefaultTunnelConfig | null;
 }
 
 export const DEFAULT_CONFIG: AppConfig = {
   version: 1,
   dashboardPort: 4040,
   openBrowser: true,
+  // Baked-in default tunnel — `cscodetunnel start` works out of the box without
+  // running `cscodetunnel default ...` first. Override per-machine in
+  // ~/.cscodetunnel/config.json or clear with `cscodetunnel default --clear`.
+  defaultTunnel: {
+    name: 'cscode-tunnel',
+    hostname: '*.cscode.xyz',
+    port: 3000,
+    target: 'http://127.0.0.1:3000',
+  },
 };
 
 export function loadConfig(): AppConfig {

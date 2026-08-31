@@ -45,4 +45,17 @@ describe('config', () => {
     expect(loaded.dashboardPort).toBe(6060);
     expect(loaded.openBrowser).toBe(DEFAULT_CONFIG.openBrowser);
   });
+
+  it('persists a default tunnel config', () => {
+    saveConfig({
+      ...DEFAULT_CONFIG,
+      defaultTunnel: { name: 'myapp', hostname: 'app.example.com', port: 3000 },
+    });
+    const loaded = loadConfig();
+    expect(loaded.defaultTunnel).toEqual({
+      name: 'myapp',
+      hostname: 'app.example.com',
+      port: 3000,
+    });
+  });
 });

@@ -58,8 +58,17 @@ function tunnelCard(t) {
     a.target = '_blank';
     a.rel = 'noopener';
     urlRow.appendChild(a);
-    const copy = el('button', 'btn btn-small', 'copy');
-    copy.onclick = () => copyText(t.url);
+    const copy = el('button', 'btn btn-copy', 'copy');
+    copy.onclick = async () => {
+      if (await copyText(t.url)) {
+        copy.textContent = 'copied ✓';
+        copy.classList.add('copied');
+        setTimeout(() => {
+          copy.textContent = 'copy';
+          copy.classList.remove('copied');
+        }, 1500);
+      }
+    };
     urlRow.appendChild(copy);
   } else if (t.state === 'online') {
     urlRow.appendChild(el('span', 'dim', '(url not known)'));
@@ -74,12 +83,19 @@ function tunnelCard(t) {
   if (t.lastError) meta.appendChild(el('span', 'err-text', t.lastError));
 
   const actions = el('div', 'tunnel-actions');
+  const startBtn = el('button', 'btn btn-small', 'start');
+  startBtn.onclick = () => api(`/api/tunnels/${t.id}/start`, { method: 'POST' }).catch(alert);
   const restart = el('button', 'btn btn-small', 'restart');
   restart.onclick = () => api(`/api/tunnels/${t.id}/restart`, { method: 'POST' }).catch(alert);
   const stop = el('button', 'btn btn-small btn-danger', 'stop');
   stop.onclick = () => api(`/api/tunnels/${t.id}/stop`, { method: 'POST' }).catch(alert);
-  if (t.state === 'stopped') restart.disabled = stop.disabled = true;
-  actions.append(restart, stop);
+  if (t.state === 'stopped') {
+    restart.disabled = true;
+    stop.disabled = true;
+  } else {
+    startBtn.disabled = true;
+  }
+  actions.append(startBtn, restart, stop);
 
   card.append(head, urlRow, meta, actions);
   return card;
@@ -108,23 +124,53 @@ function qs(query) {
   return s ? `?${s}` : '';
 }
 
-function renderRequests(recs) {
+const REQ_PAGE_SIZE = 50;
+const REQ_MAX = 1000;
+let reqBuffer = []; // newest first
+let reqPage = 0;    // 0 = newest page
+
+function reqPageCount() {
+  return Math.max(1, Math.ceil(reqBuffer.length / REQ_PAGE_SIZE));
+}
+
+function renderRequests() {
   const box = $('#requests');
+  const total = reqPageCount();
+  if (reqPage < 0) reqPage = 0;
+  if (reqPage > total - 1) reqPage = total - 1;
+
+  const start = reqPage * REQ_PAGE_SIZE;
+  const slice = reqBuffer.slice(start, start + REQ_PAGE_SIZE);
+
   box.replaceChildren();
-  if (!recs.length) {
+  if (!slice.length) {
     box.appendChild(el('div', 'empty', 'No requests yet — hit your public URL.'));
-    return;
+  } else {
+    for (const r of slice) box.appendChild(requestRow(r));
   }
-  for (const r of recs) box.appendChild(requestRow(r));
+
+  const info = $('#req-page-info');
+  if (info) info.textContent = reqBuffer.length ? `page ${reqPage + 1}/${total} · ${reqBuffer.length} requests` : '–';
+  const newer = $('#req-newer');
+  const older = $('#req-older');
+  if (newer) newer.disabled = reqPage <= 0;
+  if (older) older.disabled = reqPage >= total - 1;
+}
+
+function setRequests(recs) {
+  reqBuffer = recs.slice(); // server returns newest first
+  reqPage = 0;
+  renderRequests();
 }
 
 function upsertRequest(rec) {
-  const box = $('#requests');
-  if (box.querySelector('.empty')) box.replaceChildren();
-  let row = box.querySelector(`[data-id="${rec.id}"]`);
-  if (row) row.replaceWith(requestRow(rec));
-  else box.prepend(requestRow(rec, true));
-  while (box.children.length > 200) box.lastChild.remove();
+  const idx = reqBuffer.findIndex((r) => r.id === rec.id);
+  if (idx >= 0) reqBuffer[idx] = rec;
+  else {
+    reqBuffer.unshift(rec);
+    if (reqBuffer.length > REQ_MAX) reqBuffer.length = REQ_MAX;
+  }
+  renderRequests();
   if (currentRecord && currentRecord.id === rec.id) refreshDetail();
 }
 
@@ -214,20 +260,62 @@ function asCurl(rec) {
 }
 
 /* ---------- Logs ---------- */
+const LOG_PAGE_SIZE = 50;
+const LOG_MAX_LINES = 1000;
+let logBuffer = []; // oldest first
+let logPage = 0;    // 0 = newest page
+
 function addLog(entry) {
+  logBuffer.push(entry);
+  if (logBuffer.length > LOG_MAX_LINES) logBuffer.shift();
+  renderLogs();
+}
+
+function pageCount() {
+  return Math.max(1, Math.ceil(logBuffer.length / LOG_PAGE_SIZE));
+}
+
+function renderLogs() {
   const box = $('#logs');
-  if (box.querySelector('.empty')) box.replaceChildren();
-  const line = el('div', 'log-line');
-  line.append(el('span', 'log-tun', entry.tunnelId), el('span', 'log-text', entry.line));
-  box.prepend(line);
-  while (box.children.length > 200) box.lastChild.remove();
+  const total = pageCount();
+  if (logPage < 0) logPage = 0;
+  if (logPage > total - 1) logPage = total - 1;
+
+  // Page 0 is the newest page, anchored to the end of the buffer.
+  const start = Math.max(0, logBuffer.length - (logPage + 1) * LOG_PAGE_SIZE);
+  const slice = logBuffer.slice(start, start + LOG_PAGE_SIZE);
+
+  box.replaceChildren();
+  if (!slice.length) {
+    box.appendChild(el('div', 'empty', 'No log lines yet.'));
+  } else {
+    for (let i = slice.length - 1; i >= 0; i--) {
+      const entry = slice[i];
+      const line = el('div', 'log-line');
+      line.append(el('span', 'log-tun', entry.tunnelId), el('span', 'log-text', entry.line));
+      box.appendChild(line);
+    }
+  }
+
+  const info = $('#log-page-info');
+  if (info) info.textContent = logBuffer.length ? `page ${logPage + 1}/${total} · ${logBuffer.length} lines` : '–';
+  const newer = $('#log-newer');
+  const older = $('#log-older');
+  if (newer) newer.disabled = logPage <= 0;
+  if (older) older.disabled = logPage >= total - 1;
 }
 
 /* ---------- Utils ---------- */
 function copyText(text) {
-  navigator.clipboard.writeText(text).then(
-    () => flash('copied'),
-    () => alert('copy failed:\n' + text),
+  return navigator.clipboard.writeText(text).then(
+    () => {
+      flash('copied');
+      return true;
+    },
+    () => {
+      alert('copy failed:\n' + text);
+      return false;
+    },
   );
 }
 
@@ -263,9 +351,9 @@ function connectStream() {
 }
 
 async function refreshAll() {
-  const [tunnels, recs] = await Promise.all([api('/api/tunnels'), api('/api/requests?limit=100')]);
+  const [tunnels, recs] = await Promise.all([api('/api/tunnels'), api('/api/requests?limit=500')]);
   renderTunnels(tunnels);
-  renderRequests(recs);
+  setRequests(recs);
 }
 
 /* ---------- Wiring ---------- */
@@ -282,6 +370,33 @@ document.querySelectorAll('.tab').forEach((t) => {
 document.addEventListener('keydown', (e) => {
   if (e.key === 'Escape') $('#modal-close').onclick();
 });
+$('#log-newer').onclick = () => {
+  if (logPage > 0) {
+    logPage--;
+    renderLogs();
+  }
+};
+$('#log-older').onclick = () => {
+  if (logPage < pageCount() - 1) {
+    logPage++;
+    renderLogs();
+  }
+};
+$('#req-newer').onclick = () => {
+  if (reqPage > 0) {
+    reqPage--;
+    renderRequests();
+  }
+};
+$('#req-older').onclick = () => {
+  if (reqPage < reqPageCount() - 1) {
+    reqPage++;
+    renderRequests();
+  }
+};
+
+const yearEl = $('#year');
+if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 
 refreshAll().catch(() => {});
 connectStream();

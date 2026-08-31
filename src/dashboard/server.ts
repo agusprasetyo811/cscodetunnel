@@ -78,6 +78,15 @@ export function startDashboard(opts: DashboardOptions): Promise<Dashboard> {
     }
   });
 
+  app.post('/api/tunnels/:id/start', async (req, res) => {
+    try {
+      await opts.manager.resume(req.params.id);
+      res.json({ ok: true });
+    } catch (err) {
+      res.status(404).json({ error: String(err) });
+    }
+  });
+
   app.post('/api/tunnels/:id/restart', async (req, res) => {
     try {
       await opts.manager.restart(req.params.id);
@@ -101,23 +110,14 @@ export function startDashboard(opts: DashboardOptions): Promise<Dashboard> {
   const server = http.createServer(app);
 
   return new Promise((resolve, reject) => {
-    let attempt = 0;
-    const tryListen = (port: number) => {
-      server.once('error', (err: NodeJS.ErrnoException) => {
-        if (err.code === 'EADDRINUSE' && attempt < 5) {
-          attempt++;
-          opts.log(`port ${port} busy, trying ${port + 1}`);
-          server.listen(port + 1, '127.0.0.1', () => done(port + 1));
-        } else {
-          reject(err);
-        }
-      });
-      server.listen(port, '127.0.0.1', () => done(port));
-    };
-    const done = (port: number) => {
+    const maxAttempts = 5;
+    const done = () => {
       server.removeAllListeners('error');
+      // With port 0 the OS picks a free port — report the actual bound port.
+      const address = server.address();
+      const boundPort = typeof address === 'object' && address !== null ? address.port : opts.port;
       resolve({
-        port,
+        port: boundPort,
         close: () =>
           new Promise<void>((res) => {
             hub.close();
@@ -125,6 +125,21 @@ export function startDashboard(opts: DashboardOptions): Promise<Dashboard> {
           }),
       });
     };
-    tryListen(opts.port);
+    const tryListen = (port: number, attempt: number) => {
+      // Re-attach the error handler on every attempt — `once` consumes itself,
+      // so a second consecutive failure would otherwise be unhandled.
+      server.once('error', (err: NodeJS.ErrnoException) => {
+        // EACCES is how Windows reports ports in a reserved/excluded range
+        // (e.g. Hyper-V), so treat it like a busy port and bump.
+        if ((err.code === 'EADDRINUSE' || err.code === 'EACCES') && attempt < maxAttempts) {
+          opts.log(`port ${port} busy, trying ${port + 1}`);
+          tryListen(port + 1, attempt + 1);
+        } else {
+          reject(err);
+        }
+      });
+      server.listen(port, '127.0.0.1', () => done());
+    };
+    tryListen(opts.port, 0);
   });
 }

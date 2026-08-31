@@ -35,6 +35,7 @@ cscodetunnel http 3000                 # expose localhost:3000
 cscodetunnel http 3000 --auth u:pass   # basic auth in front of the tunnel
 cscodetunnel http 3000 --host-header localhost:3000   # for Vite/Next.js dev servers that reject foreign Host headers
 cscodetunnel http 3000 --region us     # pass --region through to cloudflared
+cscodetunnel http 3000 --target http://localhost:3000   # override target if your app only listens on IPv6 (::1)
 ```
 
 URL is random (`*.trycloudflare.com`) and changes on every restart/reconnect. WebSockets pass through; request inspection works over the proxy.
@@ -62,6 +63,30 @@ cscodetunnel named list
 ```
 
 `named run <name> <port>` generates a managed config at `~/.cscodetunnel/named/<name>.yml` — **your own `~/.cloudflared/config.yml` is never touched or loaded** (this also prevents its ingress rules from hijacking quick tunnels). Pass `--raw` to run your own cloudflared config as-is, without the inspection proxy.
+
+### Default tunnel
+
+A default tunnel is baked in (`cscode-tunnel`), so after install you can just run:
+
+```sh
+cscodetunnel start                 # run the default named tunnel (random *.cscode.xyz subdomain)
+cscodetunnel start 3001            # override the port
+cscodetunnel default --clear       # remove the baked-in default
+cscodetunnel default myapp --hostname myapp.example.com --port 3000   # set your own
+```
+
+Saved in `~/.cscodetunnel/config.json` under `defaultTunnel`.
+
+Set `--hostname "*.example.com"` for a **random subdomain** on every start (trycloudflare-style):
+the `*` is replaced with a fresh `<adjective>-<noun>-<hex>` label. Requires a wildcard DNS route:
+
+```sh
+cscodetunnel named route cscode-tunnel "*.example.com"
+```
+
+> **Note:** `start` still needs the tunnel credentials (`~/.cloudflared/<uuid>.json`) and account
+> authorization (`~/.cloudflared/cert.pem`, or `cscodetunnel named login`) on the machine. These are
+> secrets and are **never** shipped in the npm package.
 
 ### Dashboard
 

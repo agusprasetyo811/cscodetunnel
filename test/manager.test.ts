@@ -92,6 +92,13 @@ describe('TunnelManager', () => {
     }
   });
 
+  it('builds a display name without a doubled scheme', async () => {
+    const m = makeManager();
+    const info = await m.start(opts({}));
+    expect(info.name).toBe('http:127.0.0.1:3000');
+    await m.stopAll();
+  });
+
   it('restarts with backoff after an unexpected exit and picks up a new URL', async () => {
     const restore = withEnv({ FAKE_URL: 'https://first-url.trycloudflare.com', FAKE_EXIT_MS: '300' });
     try {
@@ -135,6 +142,22 @@ describe('TunnelManager', () => {
       expect(await waitFor(() => m.get(info.id)?.state === 'online')).toBe(true);
       await m.stop(info.id);
       expect(await waitFor(() => m.get(info.id)?.state === 'stopped')).toBe(true);
+    } finally {
+      restore();
+    }
+  });
+
+  it('resumes a stopped tunnel back online', async () => {
+    const restore = withEnv({ FAKE_URL: 'https://resume-test.trycloudflare.com' });
+    try {
+      const m = makeManager();
+      const info = await m.start(opts({}));
+      expect(await waitFor(() => m.get(info.id)?.state === 'online')).toBe(true);
+      await m.stop(info.id);
+      expect(await waitFor(() => m.get(info.id)?.state === 'stopped')).toBe(true);
+      await m.resume(info.id);
+      expect(await waitFor(() => m.get(info.id)?.state === 'online', 5000)).toBe(true);
+      await m.stopAll();
     } finally {
       restore();
     }

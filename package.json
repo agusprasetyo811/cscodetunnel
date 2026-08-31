@@ -1,6 +1,6 @@
 {
   "name": "cscodetunnel",
-  "version": "0.1.0",
+  "version": "0.1.10",
   "description": "ngrok-like CLI + local dashboard built on Cloudflare Tunnel",
   "license": "MIT",
   "author": "Agus Prasetyo <agusprasetyo811@gmail.com>",
@@ -15,11 +15,11 @@
   ],
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/<your-username>/cscodetunnel.git"
+    "url": "git+https://github.com/agusprasetyo811/cscodetunnel.git"
   },
-  "homepage": "https://github.com/<your-username>/cscodetunnel#readme",
+  "homepage": "https://github.com/agusprasetyo811/cscodetunnel#readme",
   "bugs": {
-    "url": "https://github.com/<your-username>/cscodetunnel/issues"
+    "url": "https://github.com/agusprasetyo811/cscodetunnel/issues"
   },
   "bin": {
     "cscodetunnel": "dist/cli.js"

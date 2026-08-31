@@ -4,7 +4,7 @@ import * as fs from 'node:fs';
 import * as os from 'node:os';
 import * as path from 'node:path';
 import * as readline from 'node:readline';
-import { configFile, loadConfig, namedDir } from './config';
+import { configFile, ensureQuickConfigFile, loadConfig, namedDir, saveConfig } from './config';
 import { ensureCloudflared, managedBinaryPath, resolveCloudflared } from './cloudflared/binary';
 import { runCloudflaredCapture, runCloudflaredInteractive } from './cloudflared/spawn';
 import { TunnelManager } from './tunnel/manager';
@@ -15,7 +15,41 @@ import type { StartTunnelOptions } from './tunnel/types';
 import { log, useColor } from './util/log';
 import { openBrowser } from './util/openBrowser';
 
-const VERSION = '0.1.0';
+// Read the version from package.json so --version can't drift from the publish.
+const VERSION = (() => {
+  try {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8')) as { version?: string };
+    return pkg.version ?? '0.0.0';
+  } catch {
+    return '0.0.0';
+  }
+})();
+
+// Random subdomain labels for wildcard hostnames (trycloudflare-style).
+const RANDOM_ADJECTIVES = [
+  'rapid', 'clever', 'silent', 'bold', 'swift', 'calm', 'brave', 'bright',
+  'cozy', 'eager', 'fancy', 'gentle', 'happy', 'lively', 'mellow', 'neat',
+  'proud', 'quick', 'sharp', 'sunny', 'tidy', 'vivid', 'warm', 'wild',
+];
+const RANDOM_NOUNS = [
+  'cloud', 'creek', 'forest', 'garden', 'harbor', 'island', 'meadow', 'moon',
+  'mountain', 'ocean', 'peak', 'river', 'shadow', 'spring', 'storm', 'stream',
+  'summit', 'valley', 'wave', 'wind', 'woods', 'field', 'lake', 'stone',
+];
+
+function randomLabel(): string {
+  const adj = RANDOM_ADJECTIVES[Math.floor(Math.random() * RANDOM_ADJECTIVES.length)];
+  const noun = RANDOM_NOUNS[Math.floor(Math.random() * RANDOM_NOUNS.length)];
+  const hex = Math.random().toString(36).slice(2, 6);
+  return `${adj}-${noun}-${hex}`;
+}
+
+/** Replace a `*` wildcard in a hostname with a fresh random label. */
+export function resolveWildcardHostname(hostname?: string): string | undefined {
+  if (!hostname || !hostname.includes('*')) return hostname;
+  return hostname.replace('*', randomLabel());
+}
 
 const program = new Command();
 program
@@ -45,6 +79,11 @@ function parseAuth(value: string): { user: string; pass: string } {
 
 function toHttpUrl(port: number): string {
   return `http://127.0.0.1:${port}`;
+}
+
+/** The upstream URL the inspection proxy forwards to (--target overrides the default). */
+function upstreamOf(port: number, target?: string): string {
+  return target ?? toHttpUrl(port);
 }
 
 interface RunContext {
@@ -139,6 +178,7 @@ function localPortOf(info: { localTarget: string }): string {
 
 interface QuickOpts {
   port: number;
+  target?: string;
   auth?: string;
   hostHeader?: string;
   region?: string;
@@ -166,27 +206,28 @@ async function runQuickTunnel(kind: 'http' | 'tcp', opts: QuickOpts): Promise<vo
   const cloudflaredArgs: string[] = [];
   if (opts.region) cloudflaredArgs.push('--region', opts.region);
 
+  const upstream = upstreamOf(opts.port, opts.target);
   let proxyPort: number | null = null;
   const tunId = `${kind}-${opts.port}`;
 
   if (kind === 'http') {
     const proxy = await createInspectionProxy({
       tunnelId: tunId,
-      target: toHttpUrl(opts.port),
+      target: upstream,
       store: ctx.store,
       auth: opts.auth ? parseAuth(opts.auth) : undefined,
       hostHeader: opts.hostHeader,
     });
     ctx.proxies.push(proxy);
     proxyPort = proxy.port;
-    log.ok(`Inspection proxy listening on 127.0.0.1:${proxy.port} → ${toHttpUrl(opts.port)}`);
+    log.ok(`Inspection proxy listening on 127.0.0.1:${proxy.port} → ${upstream}`);
   }
 
   const startOpts: StartTunnelOptions = {
     id: tunId,
     kind,
     target: kind === 'http' ? `http://127.0.0.1:${proxyPort!}` : `tcp://127.0.0.1:${opts.port}`,
-    displayTarget: kind === 'http' ? toHttpUrl(opts.port) : `tcp://127.0.0.1:${opts.port}`,
+    displayTarget: kind === 'http' ? upstream : `tcp://127.0.0.1:${opts.port}`,
     cloudflaredArgs,
   };
   ctx.tunnelIds.push((await ctx.manager.start(startOpts)).id);
@@ -209,9 +250,14 @@ async function namedCreate(name: string): Promise<void> {
   if (code !== 0) process.exitCode = 1;
 }
 
-async function namedRoute(name: string, hostname: string): Promise<void> {
+async function namedRoute(name: string, hostname: string, overwrite: boolean): Promise<void> {
   const bin = await getCloudflared();
-  const { code, output } = await runCloudflaredCapture(bin, ['tunnel', 'route', 'dns', name, hostname]);
+  // Isolate from the user's ~/.cloudflared/config.yml — its `tunnel:` field would
+  // otherwise hijack name-based lookup (cloudflared reads it as the default config).
+  const args = ['--config', ensureQuickConfigFile(), 'tunnel', 'route', 'dns'];
+  if (overwrite) args.push('--overwrite-dns');
+  args.push(name, hostname);
+  const { code, output } = await runCloudflaredCapture(bin, args);
   console.log(output.trim());
   if (code !== 0) process.exitCode = 1;
 }
@@ -261,6 +307,7 @@ interface NamedRunOpts extends Omit<QuickOpts, 'port'> {
 async function runNamedTunnel(opts: NamedRunOpts): Promise<void> {
   await getCloudflared();
 
+  const hostname = resolveWildcardHostname(opts.hostname);
   const ctx = makeContext();
   wireSignals(ctx);
   wireStatusPrinting(ctx);
@@ -273,7 +320,7 @@ async function runNamedTunnel(opts: NamedRunOpts): Promise<void> {
       name: opts.name,
       target: '(user config)',
       displayTarget: '(user config)',
-      hostname: opts.hostname,
+      hostname,
     };
     ctx.tunnelIds.push((await ctx.manager.start(startOpts)).id);
     return;
@@ -293,7 +340,7 @@ async function runNamedTunnel(opts: NamedRunOpts): Promise<void> {
 
   const proxy = await createInspectionProxy({
     tunnelId: `named-${opts.name}`,
-    target: toHttpUrl(opts.port),
+    target: upstreamOf(opts.port, opts.target),
     store: ctx.store,
     auth: opts.auth ? parseAuth(opts.auth) : undefined,
     hostHeader: opts.hostHeader,
@@ -320,12 +367,84 @@ async function runNamedTunnel(opts: NamedRunOpts): Promise<void> {
     kind: 'named',
     name: opts.name,
     target: `http://127.0.0.1:${proxy.port}`,
-    displayTarget: toHttpUrl(opts.port),
+    displayTarget: upstreamOf(opts.port, opts.target),
     configFile: configPath,
-    hostname: opts.hostname,
+    hostname,
     cloudflaredArgs: opts.region ? ['--region', opts.region] : undefined,
   };
   ctx.tunnelIds.push((await ctx.manager.start(startOpts)).id);
+}
+
+/* ------------------------------------------------------------------ */
+/* default tunnel                                                      */
+/* ------------------------------------------------------------------ */
+
+interface DefaultTunnelOpts {
+  name?: string;
+  hostname?: string;
+  port?: number;
+  target?: string;
+  auth?: string;
+  hostHeader?: string;
+  region?: string;
+  clear?: boolean;
+}
+
+async function setDefaultTunnel(opts: DefaultTunnelOpts): Promise<void> {
+  const cfg = loadConfig();
+  if (opts.clear) {
+    cfg.defaultTunnel = null;
+    saveConfig(cfg);
+    log.ok('Default tunnel cleared.');
+    return;
+  }
+  if (!opts.name) throw new Error('default <name> — a tunnel name is required (or use --clear)');
+  cfg.defaultTunnel = {
+    name: opts.name,
+    hostname: opts.hostname,
+    port: opts.port,
+    target: opts.target,
+    auth: opts.auth,
+    hostHeader: opts.hostHeader,
+    region: opts.region,
+  };
+  saveConfig(cfg);
+  log.ok(`Default tunnel set: ${opts.name}${opts.hostname ? ` → https://${opts.hostname}` : ''}`);
+}
+
+interface StartOpts {
+  port?: number;
+  hostname?: string;
+  target?: string;
+  auth?: string;
+  hostHeader?: string;
+  region?: string;
+  raw: boolean;
+  noDashboard: boolean;
+  dashboardPort: number;
+  noOpen: boolean;
+}
+
+async function startDefaultTunnel(opts: StartOpts): Promise<void> {
+  const d = loadConfig().defaultTunnel;
+  if (!d?.name) {
+    throw new Error(
+      'No default tunnel set. Run: cscodetunnel default <name> --hostname <hostname> [--port <port>]',
+    );
+  }
+  await runNamedTunnel({
+    name: d.name,
+    port: opts.port ?? d.port,
+    hostname: opts.hostname ?? d.hostname,
+    target: opts.target ?? d.target,
+    auth: opts.auth ?? d.auth,
+    hostHeader: opts.hostHeader ?? d.hostHeader,
+    region: opts.region ?? d.region,
+    raw: opts.raw,
+    noDashboard: opts.noDashboard,
+    dashboardPort: opts.dashboardPort,
+    noOpen: opts.noOpen,
+  });
 }
 
 /* ------------------------------------------------------------------ */
@@ -355,6 +474,7 @@ function commonFlags(cmd: Command): Command {
   return cmd
     .option('--auth <user:pass>', 'protect the tunnel with basic auth')
     .option('--host-header <value>', 'rewrite the Host header (default: preserve)')
+    .option('--target <url>', 'upstream URL to forward to (default: http://127.0.0.1:<port>)')
     .option('--region <region>', 'pass --region through to cloudflared')
     .option('--no-dashboard', 'do not start the inspection dashboard')
     .option('--dashboard-port <port>', 'dashboard port (default: 4040, auto-bumps if busy)', (v) => Number(v))
@@ -367,6 +487,7 @@ function commonFlags(cmd: Command): Command {
 interface CommonOptionValues {
   auth?: string;
   hostHeader?: string;
+  target?: string;
   region?: string;
   dashboard?: boolean;
   dashboardPort?: number;
@@ -381,6 +502,7 @@ function toQuickOpts(port: string, o: CommonOptionValues, kind: 'http' | 'tcp'):
     port: Number(port),
     auth: o.auth,
     hostHeader: o.hostHeader,
+    target: o.target,
     region: o.region,
     noDashboard: o.dashboard === false,
     dashboardPort: o.dashboardPort || 0,
@@ -401,7 +523,10 @@ named.command('create <name>').description('Create a named tunnel').action((name
 named
   .command('route <name> <hostname>')
   .description('Create a DNS route (CNAME) for a tunnel')
-  .action((name: string, hostname: string) => namedRoute(name, hostname));
+  .option('-f, --overwrite', 'overwrite existing DNS records with this hostname')
+  .action((name: string, hostname: string, o: { overwrite?: boolean }) =>
+    namedRoute(name, hostname, Boolean(o.overwrite)),
+  );
 named.command('list').description('List named tunnels').action(() => namedList());
 named
   .command('run <name> [port]')
@@ -409,6 +534,7 @@ named
   .option('--hostname <hostname>', 'public hostname (shown in the dashboard)')
   .option('--auth <user:pass>', 'protect the tunnel with basic auth')
   .option('--host-header <value>', 'rewrite the Host header')
+  .option('--target <url>', 'upstream URL to forward to (default: http://127.0.0.1:<port>)')
   .option('--raw', "run the user's own cloudflared config without the inspection proxy")
   .option('--no-dashboard', 'do not start the inspection dashboard')
   .option('--dashboard-port <port>', 'dashboard port', (v) => Number(v))
@@ -418,8 +544,59 @@ named
       name,
       port: port ? Number(port) : undefined,
       hostname: o.hostname,
+      target: o.target,
       auth: o.auth,
       hostHeader: o.hostHeader,
+      raw: Boolean(o.raw),
+      noDashboard: o.dashboard === false,
+      dashboardPort: o.dashboardPort || 0,
+      noOpen: o.open === false,
+    }),
+  );
+
+program
+  .command('default [name]')
+  .description('Set or clear the default named tunnel (saved to config)')
+  .option('--hostname <hostname>', 'public hostname, e.g. xxx.cscode.xyz')
+  .option('--port <port>', 'local port to expose', (v) => Number(v))
+  .option('--target <url>', 'upstream URL to forward to (default: http://127.0.0.1:<port>)')
+  .option('--auth <user:pass>', 'basic auth in front of the tunnel')
+  .option('--host-header <value>', 'rewrite the Host header')
+  .option('--region <region>', 'pass --region through to cloudflared')
+  .option('--clear', 'clear the default tunnel')
+  .action((name: string | undefined, o: CommonOptionValues & { port?: number; clear?: boolean }) =>
+    setDefaultTunnel({
+      name,
+      hostname: o.hostname,
+      port: o.port,
+      target: o.target,
+      auth: o.auth,
+      hostHeader: o.hostHeader,
+      region: o.region,
+      clear: Boolean(o.clear),
+    }),
+  );
+
+program
+  .command('start [port]')
+  .description('Run the default named tunnel (set with: cscodetunnel default ...)')
+  .option('--hostname <hostname>', 'override the public hostname')
+  .option('--auth <user:pass>', 'basic auth in front of the tunnel')
+  .option('--host-header <value>', 'rewrite the Host header')
+  .option('--target <url>', 'upstream URL to forward to (default: http://127.0.0.1:<port>)')
+  .option('--region <region>', 'pass --region through to cloudflared')
+  .option('--raw', "run the user's own cloudflared config without the inspection proxy")
+  .option('--no-dashboard', 'do not start the inspection dashboard')
+  .option('--dashboard-port <port>', 'dashboard port', (v) => Number(v))
+  .option('--no-open', 'do not auto-open the dashboard')
+  .action((port: string | undefined, o: CommonOptionValues) =>
+    startDefaultTunnel({
+      port: port ? Number(port) : undefined,
+      hostname: o.hostname,
+      target: o.target,
+      auth: o.auth,
+      hostHeader: o.hostHeader,
+      region: o.region,
       raw: Boolean(o.raw),
       noDashboard: o.dashboard === false,
       dashboardPort: o.dashboardPort || 0,

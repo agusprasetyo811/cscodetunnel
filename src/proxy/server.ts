@@ -21,7 +21,7 @@ const HOP_BY_HOP = new Set([
 
 export interface InspectionProxyOptions {
   tunnelId: string;
-  /** Where to forward, e.g. http://127.0.0.1:3000 (never 'localhost'). */
+  /** Where to forward, e.g. http://127.0.0.1:3000. Prefer 127.0.0.1 — `localhost` may resolve to IPv6 `::1`. */
   target: string;
   store: RequestStore;
   auth?: BasicAuthCreds;

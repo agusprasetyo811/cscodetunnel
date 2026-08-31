@@ -82,7 +82,8 @@ export class TunnelManager {
     const id = opts.id ?? `tun-${this.nextId++}`;
     if (this.tunnels.has(id)) throw new Error(`Tunnel id already in use: ${id}`);
     const displayName =
-      opts.name || `${opts.kind}:${opts.displayTarget ?? opts.target.replace(/^[a-z]+:\/\//i, '')}`;
+      opts.name ||
+      `${opts.kind}:${(opts.displayTarget ?? opts.target).replace(/^[a-z]+:\/\//i, '')}`;
     const t: ManagedTunnel = {
       info: {
         id,
@@ -289,6 +290,20 @@ export class TunnelManager {
       this.emitStatus({ ...t.info });
       void this.spawn(t);
     }
+  }
+
+  /** Start a previously stopped tunnel (the dashboard's "start" action). */
+  async resume(id: string): Promise<void> {
+    const t = this.getTunnel(id);
+    if (t.info.state !== 'stopped') return;
+    t.stopRequested = false;
+    t.terminalError = null;
+    t.manualRestart = false;
+    t.backoff.reset();
+    t.info.restarts = 0;
+    t.info.exitCode = null;
+    this.clearTimers(t);
+    void this.spawn(t);
   }
 
   list(): TunnelInfo[] {

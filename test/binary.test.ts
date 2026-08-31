@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
-import { parseVersion } from '../src/cloudflared/binary';
+import { assetFileNameFor, parseVersion } from '../src/cloudflared/binary';
+
+describe('assetFileNameFor', () => {
+  it('maps macOS to .tgz archives', () => {
+    expect(assetFileNameFor('darwin', 'arm64')).toBe('cloudflared-darwin-arm64.tgz');
+    expect(assetFileNameFor('darwin', 'x64')).toBe('cloudflared-darwin-amd64.tgz');
+  });
+
+  it('maps linux/windows to single binaries', () => {
+    expect(assetFileNameFor('linux', 'x64')).toBe('cloudflared-linux-amd64');
+    expect(assetFileNameFor('linux', 'arm64')).toBe('cloudflared-linux-arm64');
+    expect(assetFileNameFor('win32', 'x64')).toBe('cloudflared-windows-amd64.exe');
+    expect(assetFileNameFor('win32', 'ia32')).toBe('cloudflared-windows-386.exe');
+  });
+
+  it('returns null for unsupported platforms', () => {
+    expect(assetFileNameFor('freebsd', 'x64')).toBeNull();
+  });
+});
 
 describe('parseVersion', () => {
   it('parses real cloudflared version output', () => {

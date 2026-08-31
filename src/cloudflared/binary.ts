@@ -6,26 +6,54 @@ import { log } from '../util/log';
 
 const BASE_URL = 'https://github.com/cloudflare/cloudflared/releases/latest/download';
 
+// macOS ships a .tgz archive; Linux/Windows ship single binaries. macOS asset
+// names end in `.tgz`, the others have no extra extension.
+const ASSET_MAP: Record<string, string> = {
+  'win32-x64': 'cloudflared-windows-amd64.exe',
+  'win32-ia32': 'cloudflared-windows-386.exe',
+  'win32-arm64': 'cloudflared-windows-amd64.exe',
+  'linux-x64': 'cloudflared-linux-amd64',
+  'linux-arm64': 'cloudflared-linux-arm64',
+  'darwin-x64': 'cloudflared-darwin-amd64.tgz',
+  'darwin-arm64': 'cloudflared-darwin-arm64.tgz',
+};
+
+export function assetFileNameFor(platform: string, arch: string): string | null {
+  return ASSET_MAP[`${platform}-${arch}`] ?? null;
+}
+
 export function platformAsset(): { fileName: string; url: string } | null {
-  const { platform, arch } = process;
-  const map: Record<string, string> = {
-    win32_x64: 'cloudflared-windows-amd64.exe',
-    win32_ia32: 'cloudflared-windows-386.exe',
-    win32_arm64: 'cloudflared-windows-amd64.exe',
-    linux_x64: 'cloudflared-linux-amd64',
-    linux_arm64: 'cloudflared-linux-arm64',
-    darwin_x64: 'cloudflared-darwin-amd64',
-    darwin_arm64: 'cloudflared-darwin-arm64',
-  };
-  const fileName = map[`${platform}_${arch}`];
+  const fileName = assetFileNameFor(process.platform, process.arch);
   if (!fileName) return null;
   return { fileName, url: `${BASE_URL}/${fileName}` };
+}
+
+/** macOS tarballs extract to a binary named `cloudflared`; others are already binaries. */
+function finalBinaryName(fileName: string): string {
+  return fileName.endsWith('.tgz') ? 'cloudflared' : fileName;
 }
 
 export function managedBinaryPath(): string {
   const asset = platformAsset();
   if (!asset) return path.join(binDir(), 'cloudflared');
-  return path.join(binDir(), asset.fileName);
+  return path.join(binDir(), finalBinaryName(asset.fileName));
+}
+
+/** Extract a .tgz (macOS) into `dir` and resolve with the extracted binary path. */
+function extractTgz(archive: string, dir: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const child = spawn('tar', ['-xzf', archive, '-C', dir], {
+      windowsHide: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+    let err = '';
+    child.stderr.on('data', (d: Buffer) => (err += d.toString()));
+    child.on('error', reject);
+    child.on('close', (code) => {
+      if (code === 0) resolve(path.join(dir, 'cloudflared'));
+      else reject(new Error(`tar extract failed: ${err.trim() || `exit code ${code}`}`));
+    });
+  });
 }
 
 async function runVersion(bin: string): Promise<string | null> {
@@ -83,7 +111,8 @@ export async function downloadCloudflared(dir: string): Promise<string> {
     throw new Error(`Unsupported platform: ${process.platform}/${process.arch}`);
   }
   fs.mkdirSync(dir, { recursive: true });
-  const dest = path.join(dir, asset.fileName);
+  const archive = path.join(dir, asset.fileName);
+  const dest = path.join(dir, finalBinaryName(asset.fileName));
   log.dim(`Downloading cloudflared from ${asset.url} ...`);
 
   let lastErr: unknown;
@@ -95,7 +124,12 @@ export async function downloadCloudflared(dir: string): Promise<string> {
       });
       if (!res.ok) throw new Error(`HTTP ${res.status} from GitHub releases`);
       const buf = Buffer.from(await res.arrayBuffer());
-      fs.writeFileSync(dest, buf);
+      fs.writeFileSync(archive, buf);
+
+      if (asset.fileName.endsWith('.tgz')) {
+        await extractTgz(archive, dir);
+        fs.rmSync(archive, { force: true });
+      }
       if (process.platform !== 'win32') fs.chmodSync(dest, 0o755);
       return dest;
     } catch (err) {

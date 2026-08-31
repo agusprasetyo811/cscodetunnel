@@ -9,8 +9,9 @@ let dash: Dashboard | null = null;
 async function makeDashboard(): Promise<{ dash: Dashboard; store: RequestStore; manager: TunnelManager }> {
   const store = new RequestStore(20);
   const manager = new TunnelManager({ binProvider: async () => 'cloudflared', log: () => {} });
-  const port = 20000 + Math.floor(Math.random() * 20000);
-  dash = await startDashboard({ port, store, manager, log: () => {} });
+  // port 0 lets the OS assign a free ephemeral port — avoids Windows
+  // reserved/excluded port ranges that surface as EACCES.
+  dash = await startDashboard({ port: 0, store, manager, log: () => {} });
   return { dash, store, manager };
 }
 
@@ -83,12 +84,14 @@ describe('dashboard', () => {
     expect(list[0].path).toBe('/b');
   });
 
-  it('404s on unknown tunnel stop/restart and unknown request', async () => {
+  it('404s on unknown tunnel stop/restart/start and unknown request', async () => {
     const { dash } = await makeDashboard();
     const res = await fetch(`http://127.0.0.1:${dash.port}/api/tunnels/nope/stop`, { method: 'POST' });
     expect(res.status).toBe(404);
-    const res2 = await fetch(`http://127.0.0.1:${dash.port}/api/requests/nope`);
+    const res2 = await fetch(`http://127.0.0.1:${dash.port}/api/tunnels/nope/start`, { method: 'POST' });
     expect(res2.status).toBe(404);
+    const res3 = await fetch(`http://127.0.0.1:${dash.port}/api/requests/nope`);
+    expect(res3.status).toBe(404);
   });
 
   it('pushes request events over SSE', async () => {
