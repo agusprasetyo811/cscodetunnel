@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cscodetunnel</title>
+  <link rel="stylesheet" href="style.css" />
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚇</text></svg>" />
+</head>
+<body>
+  <header>
+    <h1>cscodetunnel</h1>
+    <div id="conn" class="conn conn-offline">offline</div>
+  </header>
+
+  <main>
+    <section id="tunnels" class="tunnels"></section>
+
+    <section class="panels">
+      <div class="panel">
+        <h2>Requests</h2>
+        <div id="requests" class="requests">
+          <div class="empty">No requests yet — hit your public URL.</div>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>cloudflared log</h2>
+        <div id="logs" class="logs">
+          <div class="empty">No log lines yet.</div>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <div id="modal" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-head">
+        <div id="modal-title"></div>
+        <div class="modal-actions">
+          <button id="copy-curl" class="btn btn-small">copy as curl</button>
+          <button id="modal-close" class="btn btn-small">✕</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <button data-tab="request" class="tab active">Request</button>
+        <button data-tab="response" class="tab">Response</button>
+      </div>
+      <div id="modal-body"></div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
