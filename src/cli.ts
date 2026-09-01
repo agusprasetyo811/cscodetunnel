@@ -14,6 +14,7 @@ import { startDashboard, type Dashboard } from './dashboard/server';
 import type { StartTunnelOptions } from './tunnel/types';
 import { log, useColor } from './util/log';
 import { openBrowser } from './util/openBrowser';
+import { track } from './util/telemetry';
 
 // Read the version from package.json so --version can't drift from the publish.
 const VERSION = (() => {
@@ -612,6 +613,18 @@ program.command('doctor').description('Check environment and cloudflared setup')
 
 const noColor = !process.stdout.isTTY;
 useColor(!noColor);
+
+// Anonymous usage ping (opt-out: CSCDFLARED_TELEMETRY=0).
+{
+  const [sub, nested] = process.argv.slice(2);
+  const command = sub === 'named' && nested ? `named ${nested}` : sub || 'help';
+  track('cscode_run', {
+    command,
+    version: VERSION,
+    platform: process.platform,
+    arch: process.arch,
+  });
+}
 
 program
   .parseAsync(process.argv)

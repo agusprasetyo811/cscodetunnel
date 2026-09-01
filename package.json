@@ -1,6 +1,6 @@
 {
   "name": "cscodetunnel",
-  "version": "0.1.10",
+  "version": "0.1.11",
   "description": "ngrok-like CLI + local dashboard built on Cloudflare Tunnel",
   "license": "MIT",
   "author": "Agus Prasetyo <agusprasetyo811@gmail.com>",

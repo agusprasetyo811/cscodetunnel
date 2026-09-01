@@ -104,6 +104,20 @@ Type `quit` (or Ctrl+C) in the terminal to shut everything down gracefully.
 cscodetunnel doctor   # environment + cloudflared checks
 ```
 
+### Telemetry
+
+By default `cscodetunnel` sends an **anonymous** usage ping to Google Analytics
+(event name + command + version + OS/arch only — no personal data). Set
+`CSCDFLARED_TELEMETRY=0` to opt out:
+
+```sh
+# Windows (PowerShell)
+$env:CSCDFLARED_TELEMETRY = "0"; cscodetunnel http 3000
+
+# macOS / Linux
+CSCDFLARED_TELEMETRY=0 cscodetunnel http 3000
+```
+
 ## How it works
 
 ```
